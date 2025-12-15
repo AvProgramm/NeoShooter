@@ -91,7 +91,7 @@ const ctx = c.getContext('2d');
 const $ = id => document.getElementById(id);
 
 let W, H, score=0, frame=0, gameOver=false, gameWon=false, paused=false;
-let level=1, health=1000, maxHealth=1000, mana=0, maxMana=150;
+let level=1, health=100, maxHealth=100, mana=0, maxMana=150;
 let invuln=0, waiting=false, nextLvl=1, bossThreshold=1200;
 let dashCD=0, laserMode=false, tutorialStep=0;
 let animId, speedBoost=1, bossSpeedBoost=1;
@@ -201,7 +201,7 @@ function reset(full=true){
   if(full){
     score=0; level=1; bossThreshold=1200;
   }
-  frame=0; gameOver=false; gameWon=false; paused=false; health=1000; mana=0; invuln=0; waiting=false; dashCD=0; laserMode=false; tutorialStep=0; speedBoost=1; bossSpeedBoost=1;
+  frame=0; gameOver=false; gameWon=false; paused=false; health=100; mana=0; invuln=0; waiting=false; dashCD=0; laserMode=false; tutorialStep=0; speedBoost=1; bossSpeedBoost=1;
   obstacles=[]; bullets=[]; enemies=[]; particles=[]; walls=[]; drops=[]; boss=null; bossShields=[]; mirrorMinions=[];
   player.trail=[]; player.dmg=1; player.dashing=false; player.dashTime=0; player.dashDuration=12;
   player.x=W/2-player.w/2; player.y=H-80;
@@ -878,4 +878,236 @@ function update(){
   
   score += 0.2;
   if(frame%60===0 && mana<maxMana) mana = Math.min(maxMana, mana+2);
-  if(frame%20
+  if(frame%20===0) updateUI();
+
+  frame++;
+}
+
+function end(){
+  gameOver=true;
+  $('gameOver').style.display='block';
+}
+
+function draw(){
+  const lvl = getLvl();
+
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,W,H);
+
+  // Grid
+  ctx.strokeStyle=lvl.grid;
+  ctx.lineWidth=1.5;
+  const gridMove = frame*3%60;
+  for(let x=0; x<W; x+=60){
+    ctx.beginPath();
+    ctx.moveTo(x,0);
+    ctx.lineTo(x,H);
+    ctx.stroke();
+  }
+  for(let y=gridMove; y<H; y+=60){
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    ctx.lineTo(W,y);
+    ctx.stroke();
+  }
+
+  // Special effects
+  if(lvl.special==='glitch' && frame%50<8){
+    ctx.fillStyle=`rgba(170,0,255,${0.05+Math.random()*0.05})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  if(lvl.special==='ultimate'){
+    const pulse = Math.sin(frame*0.05)*0.3+0.7;
+    ctx.strokeStyle=`rgba(255,0,0,${0.1+pulse*0.1})`;
+    for(let x=0; x<W; x+=30){
+      ctx.beginPath();
+      ctx.moveTo(x,0);
+      ctx.lineTo(x,H);
+      ctx.stroke();
+    }
+    for(let y=gridMove; y<H; y+=30){
+      ctx.beginPath();
+      ctx.moveTo(0,y);
+      ctx.lineTo(W,y);
+      ctx.stroke();
+    }
+  }
+
+  // Player trail
+  ctx.globalAlpha=1;
+  player.trail.forEach((t,i)=>{
+    const trailColor = player.dashing ? '#ff00ff' : lvl.color;
+    ctx.fillStyle=trailColor;
+    ctx.globalAlpha=(i+1)/player.trail.length*0.6;
+    ctx.fillRect(t.x+2,t.y+2,player.w-4,player.h-4);
+  });
+  ctx.globalAlpha=1;
+
+  // Player
+  if(invuln===0 || Math.floor(frame/3)%2===0){
+    const playerColor = player.dashing ? '#ff00ff' : (laserMode ? '#ffff00' : lvl.color);
+    ctx.fillStyle=playerColor;
+    ctx.shadowBlur=player.dashing ? 30 : (laserMode ? 25 : 20);
+    ctx.shadowColor=playerColor;
+    ctx.fillRect(player.x,player.y,player.w,player.h);
+    ctx.fillStyle='#fff';
+    ctx.fillRect(player.x+5,player.y+5,player.w-10,2);
+    ctx.shadowBlur=0;
+  }
+
+  // Obstacles
+  obstacles.forEach(o=>{
+    let color = lvl.color;
+    if(o.type==='glitch') color='#aa00ff';
+    if(o.type==='split') color='#00aaff';
+    if(o.type==='rotating') color='#ffaa00';
+    if(o.type==='neural') color='#ff00ff';
+    if(o.type==='quantum') color='#00ff00';
+
+    if(o.phased){
+      ctx.globalAlpha=0.3;
+    }
+
+    ctx.fillStyle=color;
+    ctx.shadowBlur=15;
+    ctx.shadowColor=color;
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='#fff';
+    ctx.fillRect(o.x+5,o.y+o.h/2-1,o.w-10,2);
+    ctx.shadowBlur=0;
+    ctx.globalAlpha=1;
+  });
+
+  // Walls
+  walls.forEach(w=>{
+    ctx.fillStyle='#ff6600';
+    ctx.shadowBlur=20;
+    ctx.shadowColor='#ff6600';
+    ctx.fillRect(w.x,w.y,w.w,w.h);
+    ctx.shadowBlur=0;
+  });
+
+  // Enemies
+  enemies.forEach(e=>{
+    ctx.fillStyle='#ff0066';
+    ctx.shadowBlur=18;
+    ctx.shadowColor='#ff0066';
+    ctx.fillRect(e.x,e.y,e.w,e.h);
+    ctx.fillStyle='#fff';
+    ctx.fillRect(e.x+6,e.y+6,e.w-12,e.h-12);
+    ctx.shadowBlur=0;
+  });
+
+  // Mirror minions
+  mirrorMinions.forEach(m=>{
+    ctx.fillStyle='#ffffff';
+    ctx.shadowBlur=15;
+    ctx.shadowColor='#ffffff';
+    ctx.fillRect(m.x,m.y,m.w,m.h);
+    ctx.fillStyle='#00ffff';
+    ctx.fillRect(m.x+5,m.y+5,m.w-10,2);
+    ctx.shadowBlur=0;
+  });
+
+  // Drops
+  drops.forEach(d=>{
+    if(!d.active) return;
+    const col = d.type==='health' ? '#00ff00' : '#aa00ff';
+    ctx.fillStyle=col;
+    ctx.shadowBlur=15;
+    ctx.shadowColor=col;
+    ctx.fillRect(d.x,d.y,d.w,d.h);
+    ctx.fillStyle='#fff';
+    ctx.font='20px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(d.type==='health'?'❤️':'⚡', d.x+d.w/2, d.y+d.h/2+7);
+    ctx.shadowBlur=0;
+  });
+
+  // Bullets
+  bullets.forEach(b=>{
+    if(b.owner==='boss'){
+      ctx.fillStyle='#ff0066';
+      ctx.shadowColor='#ff0066';
+    } else if(b.laser){
+      ctx.fillStyle='#ffff00';
+      ctx.shadowColor='#ffff00';
+      ctx.shadowBlur=20;
+    } else {
+      ctx.fillStyle='#ffff00';
+      ctx.shadowColor='#ffff00';
+    }
+    ctx.shadowBlur=b.laser ? 20 : 12;
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.shadowBlur=0;
+  });
+
+  // Boss shields
+  bossShields.forEach(s=>{
+    if(!s.active) return;
+    ctx.fillStyle='#00ffff';
+    ctx.shadowBlur=20;
+    ctx.shadowColor='#00ffff';
+    ctx.fillRect(s.x,s.y,s.w,s.h);
+    ctx.fillStyle='#fff';
+    const hpW = s.w*(s.hp/s.maxHp);
+    ctx.fillRect(s.x,s.y+2,hpW,3);
+    ctx.shadowBlur=0;
+  });
+
+  // Boss
+  if(boss){
+    let bossColor = lvl.color;
+    if(boss.type==='mirror') bossColor='#ffffff';
+    if(boss.type==='ultimate') bossColor='#ff0000';
+
+    ctx.fillStyle=bossColor;
+    ctx.shadowBlur=35;
+    ctx.shadowColor=bossColor;
+    ctx.fillRect(boss.x,boss.y,boss.w,boss.h);
+
+    ctx.fillStyle='#fff';
+    const hpWidth = boss.w*(boss.hp/boss.maxHp);
+    ctx.fillRect(boss.x,boss.y+8,hpWidth,7);
+
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#fff';
+    ctx.font='15px Courier New';
+    ctx.textAlign='center';
+    let bossName = boss.type==='mirror' ? 'MIRROR' : (boss.type==='ultimate' ? 'CHAOS' : 'GUARDIAN');
+    if(boss.phase>1) bossName += ' [PHASE '+boss.phase+']';
+    ctx.fillText(bossName, boss.x+boss.w/2, boss.y-12);
+  }
+
+  // Particles
+  particles.forEach(p=>{
+    ctx.fillStyle=p.color;
+    ctx.globalAlpha=p.life/50;
+    ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);
+  });
+  ctx.globalAlpha=1;
+
+  // Pause overlay
+  if(paused){
+    ctx.fillStyle='rgba(0,0,0,0.8)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#00ffff';
+    ctx.font='45px Courier New';
+    ctx.textAlign='center';
+    ctx.fillText('PAUSED', W/2, H/2);
+    ctx.font='22px Courier New';
+    ctx.fillText('Press ESC to resume', W/2, H/2+45);
+  }
+}
+
+function loop(){
+  update();
+  draw();
+  if(!gameOver && !gameWon) animId=requestAnimationFrame(loop);
+}
+
+// Initialize the game
+resize();
+</script>
+</body>
+</html>
