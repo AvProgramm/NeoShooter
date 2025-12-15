@@ -91,7 +91,7 @@ const ctx = c.getContext('2d');
 const $ = id => document.getElementById(id);
 
 let W, H, score=0, frame=0, gameOver=false, gameWon=false, paused=false;
-let level=1, health=100, maxHealth=100, mana=0, maxMana=150;
+let level=1, health=1000, maxHealth=1000, mana=0, maxMana=150;
 let invuln=0, waiting=false, nextLvl=1, bossThreshold=1200;
 let dashCD=0, laserMode=false, tutorialStep=0;
 let animId, speedBoost=1, bossSpeedBoost=1;
@@ -201,7 +201,7 @@ function reset(full=true){
   if(full){
     score=0; level=1; bossThreshold=1200;
   }
-  frame=0; gameOver=false; gameWon=false; paused=false; health=100; mana=0; invuln=0; waiting=false; dashCD=0; laserMode=false; tutorialStep=0; speedBoost=1; bossSpeedBoost=1;
+  frame=0; gameOver=false; gameWon=false; paused=false; health=1000; mana=0; invuln=0; waiting=false; dashCD=0; laserMode=false; tutorialStep=0; speedBoost=1; bossSpeedBoost=1;
   obstacles=[]; bullets=[]; enemies=[]; particles=[]; walls=[]; drops=[]; boss=null; bossShields=[]; mirrorMinions=[];
   player.trail=[]; player.dmg=1; player.dashing=false; player.dashTime=0; player.dashDuration=12;
   player.x=W/2-player.w/2; player.y=H-80;
