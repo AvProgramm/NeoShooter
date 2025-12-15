@@ -20,7 +20,7 @@ canvas { display:block; }
 #menu h2 { color:#fff; font-size:24px; margin:0 0 40px 0; opacity:0.8; }
 .menu-btn { background:#003333; border:3px solid #00ffff; color:#00ffff; padding:15px 40px; margin:10px; font-size:20px; cursor:pointer; font-family:'Courier New'; transition:all 0.3s; text-shadow:0 0 10px #00ffff; }
 .menu-btn:hover { background:#00ffff; color:#000; box-shadow:0 0 20px #00ffff; }
-.level-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:15px; margin-top:30px; }
+.level-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:15px; margin-top:30px; }
 .level-btn { background:#001a1a; border:2px solid #00ffff; color:#00ffff; padding:20px; font-size:18px; cursor:pointer; font-family:'Courier New'; transition:all 0.3s; }
 .level-btn:hover { background:#00ffff; color:#000; transform:scale(1.1); }
 #transition { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center; color:#00ffff; font-size:40px; text-shadow:0 0 30px #00ffff; z-index:100; background:rgba(0,0,0,0.95); padding:40px 60px; border:3px solid #00ffff; border-radius:10px; }
@@ -51,6 +51,7 @@ canvas { display:block; }
       <button class="level-btn" onclick="startGame(8)">8</button>
       <button class="level-btn" onclick="startGame(9)">9</button>
       <button class="level-btn" onclick="startGame(10)">10</button>
+      <button class="level-btn" onclick="startGame(11)" style="border-color:#ff0000; color:#ff0000;">FINAL</button>
     </div>
   </div>
 </div>
@@ -89,13 +90,15 @@ let level=1, health=1000, maxHealth=1000, mana=0, maxMana=150;
 let invuln=0, waiting=false, nextLvl=1, bossThreshold=1200;
 let dashCD=0, laserMode=false, tutorialStep=0;
 let animId, speedBoost=1;
+let challengePhase=0, bossDefeatedCount=0, phaseTimer=0, finalBossActive=false;
 
-const player = {x:0,y:0,w:25,h:25,speed:7,trail:[],dmg:1,dashing:false,dashDir:{x:0,y:0}};
+const player = {x:0,y:0,w:25,h:25,speed:7,trail:[],dmg:1,dashing:false,dashDir:{x:0,y:0}, dashTimer:0};
 let obstacles=[], bullets=[], enemies=[], particles=[], walls=[], drops=[], boss=null, bossShields=[];
+let challengeObstacles=[], challengeWalls=[], challengeEnemies=[], allBosses=[];
 
 const keys = {
   ArrowLeft:0, ArrowRight:0, ArrowUp:0, ArrowDown:0,
-  KeyA:0, KeyD:0, KeyW:0, KeyS:0, Space:0, Escape:0
+  KeyA:0, KeyD:0, KeyW:0, KeyS:0, Space:0, Escape:0, Shift:0
 };
 
 const levels = [
@@ -108,7 +111,8 @@ const levels = [
   {name:'MEMORY LEAK',desc:'Fragments multiply',color:'#00aaff',grid:'#002233',spawn:60,speed:5,bossAdd:500,special:'split'},
   {name:'NEURAL NET',desc:'AI controlled zone',color:'#ff00ff',grid:'#330033',spawn:50,speed:6,bossAdd:500,special:'neural'},
   {name:'QUANTUM REALM',desc:'Physics break down',color:'#00ff00',grid:'#003300',spawn:55,speed:5,bossAdd:500,special:'quantum'},
-  {name:'MIRROR SYSTEM',desc:'Face yourself',color:'#ffffff',grid:'#222222',spawn:50,speed:6,bossAdd:500,special:'mirror'}
+  {name:'MIRROR SYSTEM',desc:'Face yourself',color:'#ffffff',grid:'#222222',spawn:50,speed:6,bossAdd:500,special:'mirror'},
+  {name:'FINAL CHALLENGE',desc:'All systems combined',color:'#ff0000',grid:'#330000',spawn:40,speed:6,bossAdd:2000,special:'ultimate'}
 ];
 
 const getLvl = () => levels[level-1] || levels[0];
@@ -159,9 +163,15 @@ window.addEventListener('keydown', e=>{
   if(e.code==='Escape') paused = !paused;
   if(e.code==='Enter' && waiting){
     waiting=false;
-    level=nextLvl;
-    $('transition').style.display='none';
-    updateUI();
+    if(level === 11 && bossDefeatedCount < 6) {
+      // In Level 11, don't change level, just continue
+      $('transition').style.display='none';
+      updateUI();
+    } else {
+      level=nextLvl;
+      $('transition').style.display='none';
+      updateUI();
+    }
   }
 });
 window.addEventListener('keyup', e=>{
@@ -180,9 +190,15 @@ window.addEventListener('click', ()=>{
   }
   if(waiting){
     waiting=false;
-    level=nextLvl;
-    $('transition').style.display='none';
-    updateUI();
+    if(level === 11 && bossDefeatedCount < 6) {
+      // In Level 11, don't change level, just continue
+      $('transition').style.display='none';
+      updateUI();
+    } else {
+      level=nextLvl;
+      $('transition').style.display='none';
+      updateUI();
+    }
   }
 });
 
@@ -193,8 +209,10 @@ function reset(full=true){
     score=0; level=1; bossThreshold=1200;
   }
   frame=0; gameOver=false; gameWon=false; paused=false; health=1000; mana=0; invuln=0; waiting=false; dashCD=0; laserMode=false; tutorialStep=0; speedBoost=1;
+  challengePhase=0; bossDefeatedCount=0; phaseTimer=0; finalBossActive=false;
   obstacles=[]; bullets=[]; enemies=[]; particles=[]; walls=[]; drops=[]; boss=null; bossShields=[];
-  player.trail=[]; player.dmg=1; player.dashing=false;
+  challengeObstacles=[]; challengeWalls=[]; challengeEnemies=[]; allBosses=[];
+  player.trail=[]; player.dmg=1; player.dashing=false; player.dashTimer=0;
   player.x=W/2-player.w/2; player.y=H-80;
   $('gameOver').style.display='none';
   $('victory').style.display='none';
@@ -216,16 +234,19 @@ function updateUI(){
   $('manaValue').innerText = Math.floor(mana);
 
   const bossScore = Math.max(0, bossThreshold - Math.floor(score));
-  const bossText = boss ? 'BOSS ACTIVE!' : `BOSS: ${bossScore}`;
+  let bossText = boss ? 'BOSS ACTIVE!' : `BOSS: ${bossScore}`;
+  if(level === 11){
+    bossText = `ULTIMATE CHALLENGE: PHASE ${challengePhase+1}/6 | BOSSES DEFEATED: ${bossDefeatedCount}`;
+  }
   $('levelInfo').innerHTML = `${lvl.name}<br><span style="font-size:12px;">${bossText}</span>`;
 
   // Tutorial messages for level 1
   if(level===1 && !boss){
     if(tutorialStep===0 && mana>=25){
-      showTutorial('MANA CHARGED! Use A S W D to DASH (25 mana)');
+      showTutorial('MANA CHARGED! Hold SHIFT + WASD to DASH (25 mana)');
       tutorialStep=1;
     } else if(tutorialStep===1 && mana>=120){
-      showTutorial('FULL POWER! Press SPACE at 120 mana for CONTINUOUS LASER!');
+      showTutorial('FULL POWER! Hold SPACE at 120 mana for CONTINUOUS LASER!');
       tutorialStep=2;
     }
   }
@@ -245,7 +266,9 @@ function transition(n){
   nextLvl=n;
   const lvl = levels[n-1];
   obstacles=[]; bullets=[]; enemies=[]; walls=[]; drops=[]; boss=null; bossShields=[];
+  challengeObstacles=[]; challengeWalls=[]; challengeEnemies=[]; allBosses=[];
   tutorialStep=0;
+  challengePhase=0; bossDefeatedCount=0; phaseTimer=0; finalBossActive=false;
 
   bossThreshold = Math.floor(score) + lvl.bossAdd;
 
@@ -253,7 +276,7 @@ function transition(n){
     <div class="title" style="color:${lvl.color};">LEVEL ${n}</div>
     <div style="font-size:28px; margin:15px 0;">${lvl.name}</div>
     <div style="font-size:18px; opacity:0.8;">${lvl.desc}</div>
-    <div style="color:#ffaa00; margin-top:15px; font-size:16px;">Boss at: ${bossThreshold} pts</div>
+    ${n===11 ? '<div style="color:#ff0000; margin-top:15px; font-size:16px;">SURVIVE 6 BOSSES IN A ROW!</div>' : `<div style="color:#ffaa00; margin-top:15px; font-size:16px;">Boss at: ${bossThreshold} pts</div>`}
     <p style="color:#ffaa00; margin-top:25px; font-size:20px;" class="blink">PRESS ENTER OR CLICK</p>
   `;
   $('transition').style.display='block';
@@ -276,7 +299,65 @@ function spawnBoss(){
         angle: i*Math.PI/2, radius:120, w:60, h:15
       });
     }
+  } else if(level === 11){
+    // Challenge mode - spawn boss based on phase
+    const phaseHp = 60 + challengePhase*20;
+
+    if(challengePhase === 0){
+      // Phase 1: Basic boss
+      boss = {
+        x:W/2-90, y:50, w:180, h:45, hp:phaseHp, maxHp:phaseHp,
+        speed:2.5, dir:1, shootCD:0, type:'standard', phase:1
+      };
+    } else if(challengePhase === 1){
+      // Phase 2: Firewall boss (shoots more)
+      boss = {
+        x:W/2-90, y:50, w:180, h:45, hp:phaseHp, maxHp:phaseHp,
+        speed:3, dir:1, shootCD:0, type:'firewall', phase:1
+      };
+    } else if(challengePhase === 2){
+      // Phase 3: Swarm boss (moves faster)
+      boss = {
+        x:W/2-60, y:50, w:120, h:40, hp:phaseHp, maxHp:phaseHp,
+        speed:4, dir:1, shootCD:0, type:'swarm', phase:1
+      };
+    } else if(challengePhase === 3){
+      // Phase 4: Rotating boss (with rotating minions)
+      boss = {
+        centerX:W/2, centerY:H/3, radius:80, angle:0, angularSpeed:0.03,
+        x:W/2-60, y:H/3-60, w:120, h:60, hp:phaseHp, maxHp:phaseHp,
+        speed:0, shootCD:0, type:'rotating', phase:1
+      };
+      // Add rotating obstacles
+      for(let i=0; i<4; i++){
+        challengeObstacles.push({
+          centerX:W/2, centerY:H/3, radius:200, angle:i*Math.PI/2,
+          angularSpeed:0.05, w:40, h:40, speed:0, type:'rotating', hp:3
+        });
+      }
+    } else if(challengePhase === 4){
+      // Phase 5: Quantum boss (phases in/out)
+      boss = {
+        x:W/2-60, y:50, w:120, h:40, hp:phaseHp, maxHp:phaseHp,
+        speed:2.5, dir:1, shootCD:0, type:'quantum', phase:1,
+        phaseCD:0, phased:false
+      };
+    } else if(challengePhase === 5){
+      // Phase 6: Final boss - Mirror system
+      boss = {
+        x:W/2-30, y:80, w:30, h:30, hp:phaseHp*1.5, maxHp:phaseHp*1.5, speed:0,
+        type:'mirror', shootCD:0, mirrorX:0, mirrorY:0
+      };
+      for(let i=0; i<4; i++){
+        bossShields.push({
+          id:i, hp:40, maxHp:40, active:true,
+          angle: i*Math.PI/2, radius:120, w:60, h:15
+        });
+      }
+      finalBossActive = true;
+    }
   } else {
+    // Standard boss for other levels
     boss = {
       x:W/2-90, y:50, w:180, h:45, hp:hp, maxHp:hp,
       speed:2.5+level*0.4, dir:1, shootCD:0, type:'standard', phase:1
@@ -326,19 +407,69 @@ function spawnObstacle(){
     obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'quantum', hp:2, phaseCD:0});
   } else if(lvl.special === 'mirror'){
     obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'mirror', hp:3});
+  } else if(lvl.special === 'ultimate'){
+    // Ultimate level spawns ALL types
+    const types = ['basic','stream','glitch','split','neural','quantum','mirror'];
+    const type = types[Math.floor(Math.random()*types.length)];
+
+    if(type === 'stream'){
+      obstacles.push({x:Math.random()*(W-20), y:-20, w:20, h:80, speed:lvl.speed*speedBoost, type:'stream', hp:2});
+    } else if(type === 'glitch'){
+      obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'glitch', hp:3, teleportCD:60+Math.random()*60});
+    } else if(type === 'split'){
+      obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:w*0.6, speed:lvl.speed*speedBoost, type:'split', hp:2, splits:2});
+    } else if(type === 'neural'){
+      obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'neural', hp:2, vx:(Math.random()-0.5)*3});
+    } else if(type === 'quantum'){
+      obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'quantum', hp:2, phaseCD:0});
+    } else if(type === 'mirror'){
+      obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'mirror', hp:3});
+    } else {
+      obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'basic', hp:3});
+    }
+
+    // Also spawn enemies sometimes
+    if(Math.random()<0.3){
+      enemies.push({x:Math.random()*W, y:-30, w:20, h:20, speed:2+Math.random()*2, hp:4, vx:0, vy:0, type:'virus'});
+    }
   } else {
     obstacles.push({x:Math.random()*(W-w), y:-30, w:w, h:25, speed:lvl.speed*speedBoost, type:'basic', hp:2});
   }
 }
 
 function spawnWall(){
-  const gapSize = 140;
-  const gap1 = Math.random()*(W/2-gapSize-50)+50;
-  const gap2 = W/2 + Math.random()*(W/2-gapSize-50);
+  const lvl = getLvl();
+  const playerWidth = player.w;
 
-  walls.push({x:0, y:-40, w:gap1, h:40, speed:2.5*speedBoost});
-  walls.push({x:gap1+gapSize, y:-40, w:gap2-(gap1+gapSize), h:40, speed:2.5*speedBoost});
-  walls.push({x:gap2+gapSize, y:-40, w:W-(gap2+gapSize), h:40, speed:2.5*speedBoost});
+  // Calculate safe gaps
+  let gapSize, gap1, gap2;
+
+  if(lvl.special === 'walls' || level === 3){
+    gapSize = playerWidth * 2.5;
+    gap1 = Math.random()*(W/2 - gapSize - 100) + 50;
+    gap2 = W/2 + Math.random()*(W/2 - gapSize - 100) + 50;
+
+    if(gap2 - (gap1 + gapSize) < playerWidth * 1.5){
+      gap2 = gap1 + gapSize + playerWidth * 2;
+    }
+  } else if(lvl.special === 'ultimate' || level === 11){
+    gapSize = playerWidth * 2;
+    gap1 = Math.random()*(W/3 - gapSize - 40) + 20;
+    gap2 = W/2 + Math.random()*(W/2 - gapSize - 40) + 20;
+
+    const middleWallWidth = gap2 - (gap1 + gapSize);
+    if(middleWallWidth < playerWidth * 1.2){
+      gap2 = gap1 + gapSize + playerWidth * 1.5;
+    }
+  } else {
+    gapSize = playerWidth * 2;
+    gap1 = Math.random()*(W/2 - gapSize - 50) + 50;
+    gap2 = W/2 + Math.random()*(W/2 - gapSize - 50);
+  }
+
+  walls.push({x:0, y:-40, w:gap1, h:40, speed:3*speedBoost});
+  walls.push({x:gap1+gapSize, y:-40, w:gap2-(gap1+gapSize), h:40, speed:3*speedBoost});
+  walls.push({x:gap2+gapSize, y:-40, w:W-(gap2+gapSize), h:40, speed:3*speedBoost});
 }
 
 function shoot(){
@@ -354,13 +485,17 @@ function shootBoss(){
   const bx = boss.x+boss.w/2;
   const by = boss.y+boss.h;
 
-  if(level === 10 && boss.type === 'mirror'){
+  if(boss.type === 'mirror' || boss.type === 'quantum' || (level===11 && challengePhase>=5)){
     const dx = player.x+player.w/2 - bx;
     const dy = player.y+player.h/2 - by;
     const len = Math.sqrt(dx*dx+dy*dy);
     bullets.push({x:bx-4, y:by, w:8, h:8, vx:dx/len*7, vy:dy/len*7, dmg:1, owner:'boss'});
   } else {
-    bullets.push({x:bx-4, y:by, w:8, h:16, speed:8, dmg:1, owner:'boss'});
+    const bulletCount = (level===11 && boss.type==='firewall') ? 3 : 1;
+    for(let i=0; i<bulletCount; i++){
+      const offset = bulletCount===3 ? (i-1)*20 : 0;
+      bullets.push({x:bx-4+offset, y:by, w:8, h:16, speed:9, dmg:1, owner:'boss'});
+    }
   }
 }
 
@@ -368,6 +503,83 @@ function dropItem(x,y,type){
   drops.push({
     x:x, y:y, w:25, h:25, type:type,
     vy:2, active:true
+  });
+}
+
+// DASH DAMAGE FUNCTION
+function applyDashDamage(){
+  if(!player.dashing) return;
+
+  // Damage obstacles
+  obstacles.forEach((o,i)=>{
+    if(collide(player, o)){
+      o.hp -= 2;
+      score += 10;
+      if(o.hp<=0){
+        obstacles[i]=null;
+        score += 20;
+        if(Math.random()<0.4) dropItem(o.x+o.w/2, o.y+o.h/2, Math.random()<0.5?'health':'mana');
+
+        const lvl = getLvl();
+        for(let j=0; j<6; j++){
+          particles.push({
+            x:o.x+o.w/2, y:o.y+o.h/2,
+            vx:(Math.random()-0.5)*5, vy:(Math.random()-0.5)*5,
+            life:20, color:lvl.color, size:4
+          });
+        }
+      }
+    }
+  });
+
+  // Damage enemies
+  enemies.forEach((e,i)=>{
+    if(collide(player, e)){
+      e.hp -= 2;
+      if(e.hp<=0){
+        enemies[i]=null;
+        score += 30;
+        if(Math.random()<0.5) dropItem(e.x, e.y, 'mana');
+
+        for(let j=0; j<5; j++){
+          particles.push({
+            x:e.x+e.w/2, y:e.y+e.h/2,
+            vx:(Math.random()-0.5)*4, vy:(Math.random()-0.5)*4,
+            life:18, color:'#ff0066', size:4
+          });
+        }
+      }
+    }
+  });
+
+  // Damage boss
+  if(boss && !boss.phased && collide(player, boss)){
+    boss.hp -= 1;
+    score += 5;
+  }
+
+  // Damage boss shields
+  bossShields.forEach((s,i)=>{
+    if(s.active && collide(player, s)){
+      s.hp -= 1;
+      score += 3;
+      if(s.hp<=0){
+        s.active=false;
+        score += 100;
+      }
+    }
+  });
+
+  // Damage challenge obstacles
+  challengeObstacles.forEach((o,i)=>{
+    if(collide(player, o)){
+      o.hp -= 2;
+      score += 5;
+      if(o.hp<=0){
+        challengeObstacles[i]=null;
+        score += 20;
+      }
+    }
   });
 }
 
@@ -379,6 +591,13 @@ function update(){
   if(invuln>0) invuln--;
   if(dashCD>0) dashCD--;
 
+  if(player.dashing){
+    player.dashTimer--;
+    if(player.dashTimer <= 0){
+      player.dashing = false;
+    }
+  }
+
   // Speed boost as approaching boss
   if(!boss){
     const progress = (score - (bossThreshold - lvl.bossAdd)) / lvl.bossAdd;
@@ -386,11 +605,12 @@ function update(){
   }
 
   // DASHING
-  const shiftPressed = keys.Shift || (keys.KeyW && keys.KeyA) || (keys.KeyW && keys.KeyD) || (keys.KeyS && keys.KeyA) || (keys.KeyS && keys.KeyD);
+  const shiftPressed = keys.Shift;
   const movePressed = (keys.ArrowLeft||keys.KeyA||keys.ArrowRight||keys.KeyD||keys.ArrowUp||keys.KeyW||keys.ArrowDown||keys.KeyS);
 
-  if(shiftPressed && movePressed && mana>=25 && dashCD===0 && !player.dashing){
+  if(!player.dashing && shiftPressed && movePressed && mana>=25 && dashCD===0){
     player.dashing = true;
+    player.dashTimer = 9;
     mana -= 25;
     dashCD = 25;
 
@@ -404,8 +624,6 @@ function update(){
     if(len > 0){
       player.dashDir = {x:dx/len, y:dy/len};
     }
-
-    setTimeout(()=>{player.dashing=false;}, 150);
   }
 
   // PLAYER MOVEMENT
@@ -413,29 +631,7 @@ function update(){
     player.x += player.dashDir.x * 20;
     player.y += player.dashDir.y * 20;
 
-    // Dash damage
-    obstacles.forEach((o,i)=>{
-      if(collide(player, o)){
-        o.hp -= 2;
-        score += 10;
-        if(o.hp<=0){
-          obstacles[i]=null;
-          score += 20;
-          if(Math.random()<0.4) dropItem(o.x+o.w/2, o.y+o.h/2, Math.random()<0.5?'health':'mana');
-        }
-      }
-    });
-
-    enemies.forEach((e,i)=>{
-      if(collide(player, e)){
-        e.hp -= 2;
-        if(e.hp<=0){
-          enemies[i]=null;
-          score += 30;
-          if(Math.random()<0.5) dropItem(e.x, e.y, 'mana');
-        }
-      }
-    });
+    applyDashDamage();
   } else {
     const spd = player.speed;
     if((keys.ArrowLeft||keys.KeyA) && player.x>0) player.x-=spd;
@@ -465,14 +661,23 @@ function update(){
   if(player.trail.length>8) player.trail.shift();
 
   // SPAWN LOGIC
-  const spawnMod = boss ? 2.5 : 1;
+  const spawnMod = boss ? (level===11 ? 1.5 : 2.5) : 1;
   if(frame%(Math.floor(lvl.spawn*spawnMod))===0){
-    if(lvl.special === 'walls') spawnWall();
+    if(lvl.special === 'walls' || (level===11 && Math.random()<0.3)) spawnWall();
     else spawnObstacle();
   }
 
-  // BOSS SPAWN
-  if(!boss && score >= bossThreshold) spawnBoss();
+  // BOSS SPAWN - Special logic for level 11
+  if(level === 11){
+    if(!boss && !waiting && challengePhase < 6){
+      // In level 11, spawn bosses based on challenge phase
+      if(bossDefeatedCount < 6){
+        spawnBoss();
+      }
+    }
+  } else {
+    if(!boss && score >= bossThreshold) spawnBoss();
+  }
 
   // UPDATE OBSTACLES
   obstacles.forEach((o,i)=>{
@@ -593,9 +798,9 @@ function update(){
     d.y += d.vy;
     if(collide(player, d)){
       if(d.type==='health'){
-        health = Math.min(maxHealth, health+20);
+        health = Math.min(maxHealth, health+30);
       } else if(d.type==='mana'){
-        mana = Math.min(maxMana, mana+15);
+        mana = Math.min(maxMana, mana+20);
       }
       drops[i]=null;
       updateUI();
@@ -624,6 +829,30 @@ function update(){
   });
   bullets = bullets.filter(b=>b);
 
+  // CHALLENGE OBSTACLES
+  challengeObstacles.forEach((o,i)=>{
+    if(o.type === 'rotating'){
+      o.angle += o.angularSpeed;
+      o.x = o.centerX + Math.cos(o.angle)*o.radius - o.w/2;
+      o.y = o.centerY + Math.sin(o.angle)*o.radius - o.h/2;
+    }
+
+    if(collide(player, o) && !player.dashing) hurt();
+
+    bullets.forEach(b=>{
+      if(b.owner==='player' && collide(b,o)){
+        b.dead=true;
+        o.hp -= b.dmg;
+        score += 5;
+        if(o.hp<=0){
+          challengeObstacles[i]=null;
+          score += 20;
+        }
+      }
+    });
+  });
+  challengeObstacles = challengeObstacles.filter(o=>o);
+
   // BOSS LOGIC
   if(boss){
     if(boss.type === 'mirror'){
@@ -635,7 +864,7 @@ function update(){
       boss.shootCD--;
       if(boss.shootCD<=0){
         shootBoss();
-        boss.shootCD = 30;
+        boss.shootCD = (level===11 && finalBossActive) ? 25 : 30;
       }
 
       bossShields.forEach((s,i)=>{
@@ -668,11 +897,57 @@ function update(){
         });
       }
 
+    } else if(boss.type === 'rotating'){
+      boss.angle += boss.angularSpeed;
+      boss.x = boss.centerX + Math.cos(boss.angle)*boss.radius - boss.w/2;
+      boss.y = boss.centerY + Math.sin(boss.angle)*boss.radius - boss.h/2;
+
+      boss.shootCD--;
+      if(boss.shootCD<=0){
+        shootBoss();
+        boss.shootCD = 35;
+      }
+
+      bullets.forEach(b=>{
+        if(b.owner==='player' && collide(b,boss)){
+          b.dead=true;
+          boss.hp -= b.dmg;
+          score += 8;
+        }
+      });
+
+    } else if(boss.type === 'quantum'){
+      boss.x += boss.speed*boss.dir;
+      if(boss.x<0 || boss.x+boss.w>W) boss.dir *= -1;
+
+      boss.phaseCD++;
+      if(boss.phaseCD>80 && boss.phaseCD<120){
+        boss.phased = true;
+      } else {
+        boss.phased = false;
+        if(boss.phaseCD>120) boss.phaseCD=0;
+      }
+
+      boss.shootCD--;
+      if(boss.shootCD<=0 && !boss.phased){
+        shootBoss();
+        boss.shootCD = 25;
+      }
+
+      if(!boss.phased){
+        bullets.forEach(b=>{
+          if(b.owner==='player' && collide(b,boss)){
+            b.dead=true;
+            boss.hp -= b.dmg;
+            score += 8;
+          }
+        });
+      }
+
     } else {
       boss.x += boss.speed*boss.dir;
       if(boss.x<0 || boss.x+boss.w>W) boss.dir *= -1;
 
-      // Phase system
       if(boss.hp < boss.maxHp*0.6 && boss.phase===1){
         boss.phase = 2;
         boss.speed += 1;
@@ -683,7 +958,10 @@ function update(){
       }
 
       boss.shootCD--;
-      const shootRate = boss.phase===1 ? 35 : (boss.phase===2 ? 25 : 18);
+      let shootRate = boss.phase===1 ? 35 : (boss.phase===2 ? 25 : 18);
+      if(boss.type === 'firewall') shootRate *= 0.7;
+      if(boss.type === 'swarm') shootRate *= 0.8;
+
       if(boss.shootCD<=0){
         shootBoss();
         boss.shootCD = shootRate;
@@ -699,9 +977,31 @@ function update(){
     }
 
     if(boss.hp<=0){
-      score += 400;
+      score += (level===11 ? 600 : 400);
       boss = null;
       bossShields = [];
+      challengeObstacles = [];
+
+      if(level === 11){
+        bossDefeatedCount++;
+        challengePhase++;
+
+        if(bossDefeatedCount < 6){
+          waiting = true;
+          $('transition').innerHTML = `
+            <div class="title" style="color:#ff0000;">BOSS ${bossDefeatedCount} DEFEATED!</div>
+            <div style="font-size:24px; margin:15px 0; color:#00ffff">${6-bossDefeatedCount} REMAINING</div>
+            <p style="color:#ffaa00; margin-top:25px; font-size:20px;" class="blink">PREPARE FOR NEXT PHASE...</p>
+          `;
+          $('transition').style.display='block';
+
+          setTimeout(()=>{
+            waiting=false;
+            $('transition').style.display='none';
+            bossThreshold = Math.floor(score) + 200;
+          }, 2000);
+        }
+      }
 
       for(let j=0; j<60; j++){
         particles.push({
@@ -711,11 +1011,21 @@ function update(){
         });
       }
 
+      // Check for victory
       if(level<10){
         transition(level+1);
-      } else {
+      } else if(level===10){
+        transition(11);
+      } else if(level===11 && bossDefeatedCount >= 6){
         gameWon=true;
         $('victory').style.display='block';
+        $('victory').innerHTML = `
+          <div class="title" style="color:#00ffff;">SYSTEM LIBERATED!</div>
+          <div style="font-size:24px; color:#ff0000; margin:20px 0;">ULTIMATE VICTORY!</div>
+          <div style="font-size:18px; color:#ffaa00;">You defeated all 6 bosses!</div>
+          <div style="font-size:22px; color:#00ff00; margin:15px 0;">FINAL SCORE: ${Math.floor(score)}</div>
+          <p style="color:#ffaa00; margin-top:25px;" class="blink">CLICK OR PRESS SPACE</p>
+        `;
       }
     }
   }
@@ -766,10 +1076,26 @@ function draw(){
     ctx.stroke();
   }
 
-  // Glitch effect
+  // Special effects
   if(lvl.special==='glitch' && frame%50<8){
     ctx.fillStyle=`rgba(170,0,255,${0.05+Math.random()*0.05})`;
     ctx.fillRect(0,0,W,H);
+  }
+  if(lvl.special==='ultimate'){
+    const pulse = Math.sin(frame*0.05)*0.3+0.7;
+    ctx.strokeStyle=`rgba(255,0,0,${0.1+pulse*0.1})`;
+    for(let x=0; x<W; x+=30){
+      ctx.beginPath();
+      ctx.moveTo(x,0);
+      ctx.lineTo(x,H);
+      ctx.stroke();
+    }
+    for(let y=gridMove; y<H; y+=30){
+      ctx.beginPath();
+      ctx.moveTo(0,y);
+      ctx.lineTo(W,y);
+      ctx.stroke();
+    }
   }
 
   // Player trail
@@ -815,6 +1141,15 @@ function draw(){
     ctx.fillRect(o.x+5,o.y+o.h/2-1,o.w-10,2);
     ctx.shadowBlur=0;
     ctx.globalAlpha=1;
+  });
+
+  // Challenge obstacles
+  challengeObstacles.forEach(o=>{
+    ctx.fillStyle='#ffaa00';
+    ctx.shadowBlur=15;
+    ctx.shadowColor='#ffaa00';
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.shadowBlur=0;
   });
 
   // Walls
@@ -887,6 +1222,14 @@ function draw(){
   if(boss){
     let bossColor = lvl.color;
     if(boss.type==='mirror') bossColor='#ffffff';
+    if(boss.type==='firewall') bossColor='#ff6600';
+    if(boss.type==='swarm') bossColor='#ff0066';
+    if(boss.type==='rotating') bossColor='#ffaa00';
+    if(boss.type==='quantum') bossColor='#00ff00';
+
+    if(boss.phased){
+      ctx.globalAlpha=0.4;
+    }
 
     ctx.fillStyle=bossColor;
     ctx.shadowBlur=35;
@@ -898,10 +1241,18 @@ function draw(){
     ctx.fillRect(boss.x,boss.y+8,hpWidth,7);
 
     ctx.shadowBlur=0;
+    ctx.globalAlpha=1;
     ctx.fillStyle='#fff';
     ctx.font='15px Courier New';
     ctx.textAlign='center';
-    let bossName = boss.type==='mirror' ? 'MIRROR' : 'GUARDIAN';
+    let bossName = '';
+    if(boss.type==='mirror') bossName = 'MIRROR';
+    else if(boss.type==='firewall') bossName = 'FIREWALL';
+    else if(boss.type==='swarm') bossName = 'SWARM';
+    else if(boss.type==='rotating') bossName = 'ROTATOR';
+    else if(boss.type==='quantum') bossName = 'QUANTUM';
+    else bossName = 'GUARDIAN';
+
     if(boss.phase>1) bossName += ' [PHASE '+boss.phase+']';
     ctx.fillText(bossName, boss.x+boss.w/2, boss.y-12);
   }
@@ -924,6 +1275,16 @@ function draw(){
     ctx.fillText('PAUSED', W/2, H/2);
     ctx.font='22px Courier New';
     ctx.fillText('Press ESC to resume', W/2, H/2+45);
+  }
+
+  // Challenge phase indicator
+  if(level === 11){
+    ctx.fillStyle='rgba(255,0,0,0.1)';
+    ctx.fillRect(0,0,W,30);
+    ctx.fillStyle='#ff0000';
+    ctx.font='16px Courier New';
+    ctx.textAlign='center';
+    ctx.fillText(`ULTIMATE CHALLENGE: PHASE ${challengePhase+1}/6 | BOSSES DEFEATED: ${bossDefeatedCount}`, W/2, 20);
   }
 }
 
